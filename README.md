@@ -146,7 +146,9 @@ conda activate iema
 python -m ipykernel install --user --name iema --display-name "Python (iema)"
 ```
 
-**4. Open `climstat_pipeline.ipynb` in VS Code and select the `Python (iema)` kernel.**
+**4. Open `climstat_pipeline.ipynb` and select the `Python (iema)` kernel:**
+- **VS Code**: Open the notebook, click the kernel picker in the top right, and select `Python (iema)`
+- **Jupyter Lab / Notebook**: Run `jupyter lab` (or `jupyter notebook`), open `climstat_pipeline.ipynb`, then select the `Python (iema)` kernel from the **Kernel → Change Kernel** menu
 
 **5. Edit the Parameters cell:**
 ```python
