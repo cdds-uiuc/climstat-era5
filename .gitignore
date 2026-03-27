@@ -1,0 +1,17 @@
+# Data — cached/generated files are too large for git
+data/cache/
+data/output/
+data/shapefiles/
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Claude
+plan.md

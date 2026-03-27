@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:forum.ecmwf.int)",
+      "WebFetch(domain:cds.climate.copernicus.eu)",
+      "WebFetch(domain:confluence.ecmwf.int)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.earthmover.io)",
+      "WebFetch(domain:discourse.pangeo.io)",
+      "WebFetch(domain:weatherlinguist.bearblog.dev)",
+      "Bash(python3:*)"
+    ]
+  }
+}

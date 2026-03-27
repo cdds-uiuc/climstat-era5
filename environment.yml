@@ -1,0 +1,34 @@
+name: iema
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13.7
+  - ipykernel=6.30.1
+  - pip=25.2
+  - pip:
+    # ── Array / dataframe core ───────────────────────────────────────────
+    - numpy==2.2.6
+    - pandas==2.3.2
+    - scipy==1.16.2
+    # ── Xarray / cloud data access ───────────────────────────────────────
+    - xarray==2025.9.0
+    - dask==2025.9.1
+    - distributed==2025.9.1
+    - zarr==3.1.3
+    - netcdf4==1.7.2
+    - h5netcdf==1.6.4
+    - h5py==3.14.0
+    # ── ERA5 remote access (Google Cloud) ────────────────────────────────
+    - fsspec==2025.9.0
+    - gcsfs==2025.9.0
+    - s3fs==2025.9.0
+    # ── Geospatial ───────────────────────────────────────────────────────
+    - geopandas==1.1.1
+    - shapely==2.1.1
+    - fiona==1.10.1
+    - pyproj==3.7.2
+    - rasterio==1.4.3
+    # ── Visualization ────────────────────────────────────────────────────
+    - matplotlib==3.10.6
+    - cartopy==0.25.0
