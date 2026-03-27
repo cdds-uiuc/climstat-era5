@@ -63,10 +63,16 @@ def _load_illinois_counties(shapefile_path: str) -> gpd.GeoDataFrame:
     """
     Load county boundaries for Illinois from the shapefile and ensure
     the coordinate reference system is EPSG:4326 (standard lat/lon).
+
+    Uses ``where`` and ``columns`` parameters so only Illinois rows and
+    the columns we need are read from disk (faster than loading the full
+    national shapefile and filtering in Python).
     """
-    gdf = gpd.read_file(shapefile_path)
-    # Filter to Illinois counties only
-    gdf_il = gdf[gdf["STATEFP"] == IL_STATEFP].reset_index(drop=True)
+    gdf_il = gpd.read_file(
+        shapefile_path,
+        where=f"STATEFP = '{IL_STATEFP}'",
+        columns=["STATEFP", "GEOID", "NAMELSAD"],
+    )
     # Ensure the CRS is lat/lon (EPSG:4326) so it matches our grid points
     if gdf_il.crs is None or gdf_il.crs.to_epsg() != 4326:
         gdf_il = gdf_il.to_crs("EPSG:4326")

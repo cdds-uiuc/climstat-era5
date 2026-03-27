@@ -49,15 +49,15 @@ For each climate metric, the pipeline computes two levels of summary statistics:
 │              thresholds                                  │
 │                                                          │
 │  ┌────────┐   ┌────────┐   ┌────────┐   ┌────────────┐   │
-│  │ Step 1 │──▶│ Step 2 │──▶│ Step 3 │──▶│  Step 4    │   │
-│  │Extract │   │Metrics │   │Summary │   │County Agg. │   │
-│  │ ERA5   │   │ Calc   │   │ Stats  │   │& Visualize │   │ 
+│  │ Step 1 │──▶│ Step 2 │──▶│ Step 3 │──▶│ Step 4a/4b │   │
+│  │Extract │   │Metrics │   │Summary │   │County/ZIP  │   │
+│  │ ERA5   │   │ Calc   │   │ Stats  │   │Agg + Viz   │   │
 │  └────────┘   └────────┘   └────────┘   └────────────┘   │
 └──────────────────────────────────────────────────────────┘
         │              │             │             │
         ▼              ▼             ▼             ▼
    era5_extract.py  metrics.py  statistics.py  county_agg.py
-   (+ cache check)  (Tier 0-3)  (daily/averages) (sjoin + viz)
+   (+ cache check)  (Tier 0-3)  (daily/averages) zipcode_agg.py
 ```
 
 **Step 1 — Extract ERA5 data** (`climstat/era5_extract.py`)
@@ -84,17 +84,21 @@ Applies the heat-metric formulas to the raw ERA5 fields. Metrics are organized i
 - **Daily summary**: daily mean / max / min, and hours above each threshold (time series)
 - **Averages**: average daily max / mean / min, average days per year above threshold, average hours per year above threshold (one value per grid cell)
 
-**Step 4 — Aggregate to county level** (`climstat/county_agg.py`)
+**Step 4a — Aggregate to county level** (`climstat/county_agg.py`)
 
-Spatially joins ERA5 grid points to Illinois county polygons (via the bundled Census TIGER/Line shapefile) and averages all statistics within each county. Outputs a `pd.DataFrame` indexed by county.
+Spatially joins ERA5 grid points to Illinois county polygons (via the bundled Census TIGER/Line shapefile) and averages all statistics within each county. Uses `where` and `columns` parameters for efficient shapefile loading (only IL rows and needed columns are read from disk). Outputs a `pd.DataFrame` indexed by county.
+
+**Step 4b — Aggregate to ZIP code level** (`climstat/zipcode_agg.py`)
+
+Maps each Illinois ZCTA (ZIP Code Tabulation Area) to its nearest ERA5 grid point via centroid distance (`sjoin_nearest`), since most ZCTAs are smaller than a single grid cell. Uses `mask` for spatial filtering and `columns` for selective column loading when reading the ZCTA shapefile. Supports a precomputed mapping (`build_zcta_mapping()`) to avoid repeated shapefile I/O across metrics.
 
 **Step 5 — Save outputs**
 
-County-level CSVs are written to `data/output/`.
+County-level and ZIP-code-level CSVs are written to `data/output/`.
 
 **Step 6 — Visualize** (`climstat/visualization.py`)
 
-Three plot types: county time-series line plot, choropleth map, and threshold exceedance heatmap (county × year).
+Five plot types: county time-series line plot, county choropleth map, threshold exceedance heatmap (region × year), ZIP-code time-series, and ZIP-code choropleth map.
 
 ---
 
@@ -104,23 +108,20 @@ Three plot types: county time-series line plot, choropleth map, and threshold ex
 climstat-era5/
 ├── climstat_pipeline.ipynb        # Single entry-point notebook
 ├── environment.yml                # Conda environment
-├── goals.md                       # Project goals
-├── plan.md                        # Implementation plan
-│
 ├── climstat/                      # Python package
 │   ├── __init__.py                # Makes climstat/ importable; loads all submodules
 │   ├── era5_extract.py            # Step 1: ERA5 extraction + per-variable-per-year caching
 │   ├── metrics.py                 # Step 2: heat metric formulas (Tier 0-3)
 │   ├── statistics.py              # Step 3: daily and averages summary statistics
-│   ├── county_agg.py              # Step 4: spatial aggregation to IL counties
-│   └── visualization.py           # Step 6: plotting utilities
+│   ├── county_agg.py              # Step 4a: spatial aggregation to IL counties
+│   ├── zipcode_agg.py             # Step 4b: spatial aggregation to IL ZIP codes (ZCTAs)
+│   └── visualization.py           # Step 6: plotting utilities (counties + ZIP codes)
 │
 └── data/
     ├── cache/                       # Raw ERA5 NetCDF downloads (one per variable per year)
     ├── shapefiles/
     │   ├── county/                # tl_2025_us_county.shp (Census TIGER/Line)
     │   └── zipcodes/              # tl_2025_us_zcta520.shp
-    ├── raw/                       # Source data (AQI, tornado event CSVs)
     └── output/                    # Final county-level CSVs (pipeline output)
 ```
 
@@ -204,8 +205,10 @@ Each metric produces two CSVs in `data/output/`:
 |---|---|
 | `daily_{metric}_{start}_{end}_counties.csv` | Daily mean/max/min and hours above each threshold, per county |
 | `averages_{metric}_{start}_{end}_counties.csv` | Climatological averages (avg daily max/mean/min, avg days/hours per year above threshold), per county |
+| `daily_{metric}_{start}_{end}_zipcodes.csv` | Daily mean/max/min and hours above each threshold, per ZIP code |
+| `averages_{metric}_{start}_{end}_zipcodes.csv` | Climatological averages, per ZIP code |
 
-Both files are indexed by `GEOID` (county FIPS code) and `NAMELSAD` (county name).
+County files are indexed by `GEOID` and `NAMELSAD`. ZIP code files are indexed by `ZCTA5CE20` (5-digit ZIP code).
 
 ---
 

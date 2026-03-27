@@ -34,4 +34,5 @@ from . import era5_extract
 from . import metrics
 from . import statistics
 from . import county_agg
+from . import zipcode_agg
 from . import visualization

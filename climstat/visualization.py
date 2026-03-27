@@ -41,7 +41,7 @@ import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
 
 
-# ── Default shapefile path (same as county_agg) ──────────────────────────
+# ── Default shapefile paths ───────────────────────────────────────────────
 DEFAULT_SHAPEFILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
     "data", "shapefiles", "county", "tl_2025_us_county.shp",
@@ -55,8 +55,11 @@ def _load_il_counties(shapefile_path: str | None = None) -> gpd.GeoDataFrame:
     """Load Illinois county boundaries from shapefile, ensuring EPSG:4326."""
     if shapefile_path is None:
         shapefile_path = DEFAULT_SHAPEFILE
-    gdf = gpd.read_file(shapefile_path)
-    gdf_il = gdf[gdf["STATEFP"] == IL_STATEFP].reset_index(drop=True)
+    gdf_il = gpd.read_file(
+        shapefile_path,
+        where=f"STATEFP = '{IL_STATEFP}'",
+        columns=["STATEFP", "GEOID", "NAMELSAD"],
+    )
     if gdf_il.crs is None or gdf_il.crs.to_epsg() != 4326:
         gdf_il = gdf_il.to_crs("EPSG:4326")
     return gdf_il
@@ -71,30 +74,33 @@ def plot_county_timeseries(
     county: str,
     daily_summary: str,
     time_col: str = "time",
+    region_col: str = "NAMELSAD",
     date_range: tuple[str, str] | None = None,
     title: str | None = None,
     ax: plt.Axes | None = None,
 ) -> plt.Axes:
     """
-    Line plot of a daily metric for a single county.
+    Line plot of a daily metric for a single region (county or ZIP code).
 
     Example usage:
         plot_county_timeseries(daily_df, "Cook County", "daily_max")
-        plot_county_timeseries(daily_df, "Cook County", "daily_max",
-                               date_range=("2023-06-01", "2023-08-31"))
+        plot_county_timeseries(daily_df, "61820", "daily_max",
+                               region_col="ZCTA5CE20")
 
     Parameters
     ----------
     df : pd.DataFrame
-        County-level daily data (output of county_agg.aggregate_to_counties
-        applied to daily_summary results).  Must contain columns NAMELSAD,
+        Region-level daily data.  Must contain the *region_col* column,
         the time column, and the metric column.
     county : str
-        County NAMELSAD to plot, e.g. "Cook County".
+        Value to match in *region_col*, e.g. "Cook County" or "61820".
     daily_summary : str
         Column to plot on the y-axis, e.g. "daily_max" or "hours_above_90".
     time_col : str
         Name of the time/date column (default "time").
+    region_col : str
+        Column that identifies regions.  Default "NAMELSAD" for counties;
+        use "ZCTA5CE20" for ZIP codes.
     date_range : tuple of (start, end) strings, optional
         Restrict the plot to dates between start and end (inclusive).
         Accepts any format understood by pd.to_datetime, e.g.
@@ -112,8 +118,8 @@ def plot_county_timeseries(
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 4))
 
-    # Filter to the requested county and sort by time
-    subset = df[df["NAMELSAD"] == county].sort_values(time_col)
+    # Filter to the requested region and sort by time
+    subset = df[df[region_col] == county].sort_values(time_col)
     times = pd.to_datetime(subset[time_col])
 
     # Apply optional date range filter
@@ -224,12 +230,14 @@ def plot_threshold_heatmap(
     df: pd.DataFrame,
     metric_col: str,
     time_col: str = "time",
+    region_col: str = "NAMELSAD",
+    top_n: int | None = None,
     title: str | None = None,
     cmap: str = "YlOrRd",
     ax: plt.Axes | None = None,
 ) -> plt.Axes:
     """
-    Heatmap of an exceedance statistic by county (rows) and year (columns).
+    Heatmap of an exceedance statistic by region (rows) and year (columns).
 
     Useful for visualizing questions like "which counties had the most
     hours above 90°F Heat Index in each year?"
@@ -239,16 +247,24 @@ def plot_threshold_heatmap(
 
     Example usage:
         plot_threshold_heatmap(daily_df, "hours_above_90")
+        plot_threshold_heatmap(zip_df, "hours_above_90",
+                               region_col="ZCTA5CE20", top_n=50)
 
     Parameters
     ----------
     df : pd.DataFrame
-        County-level daily data with columns NAMELSAD, time column, and
+        Region-level daily data with the *region_col*, time column, and
         the metric column to visualize.
     metric_col : str
         Column to aggregate and display, e.g. "hours_above_90".
     time_col : str
         Name of the time/date column.
+    region_col : str
+        Column that identifies regions.  Default "NAMELSAD" for counties;
+        use "ZCTA5CE20" for ZIP codes.
+    top_n : int, optional
+        If set, only show the top N regions by total exceedance.  Useful
+        for ZIP-code heatmaps where plotting all ~1 500 rows is unreadable.
     title : str, optional
     cmap : str
         Colormap for the heatmap.
@@ -262,9 +278,13 @@ def plot_threshold_heatmap(
     # Extract the year from the time column for grouping
     work["year"] = pd.to_datetime(work[time_col]).dt.year
 
-    # Create a pivot table: rows=counties, columns=years, values=sum of metric
-    # .unstack() converts the year index level into columns
-    pivot = work.groupby(["NAMELSAD", "year"])[metric_col].sum().unstack(fill_value=0)
+    # Create a pivot table: rows=regions, columns=years, values=sum of metric
+    pivot = work.groupby([region_col, "year"])[metric_col].sum().unstack(fill_value=0)
+
+    # Optionally keep only the top-N regions by total exceedance
+    if top_n is not None and len(pivot) > top_n:
+        totals = pivot.sum(axis=1).nlargest(top_n)
+        pivot = pivot.loc[totals.index]
 
     if ax is None:
         # Scale figure height by number of counties so labels don't overlap
@@ -280,6 +300,81 @@ def plot_threshold_heatmap(
     ax.set_xticklabels(pivot.columns)
     ax.set_xlabel("Year")
     plt.colorbar(im, ax=ax, label=metric_col)
-    ax.set_title(title or f"{metric_col} by County and Year")
+    ax.set_title(title or f"{metric_col} by {region_col} and Year")
+    plt.tight_layout()
+    return ax
+
+
+# ===========================================================================
+# 4. ZIP-code choropleth map
+# ===========================================================================
+
+def plot_zipcode_map(
+    df: pd.DataFrame,
+    average_summary: str,
+    zcta_shapefile_path: str | None = None,
+    county_shapefile_path: str | None = None,
+    title: str | None = None,
+    cmap: str = "YlOrRd",
+    ax: plt.Axes | None = None,
+) -> plt.Axes:
+    """
+    Choropleth map of a metric value across Illinois ZIP codes (ZCTAs).
+
+    Each ZCTA polygon is colored according to its metric value.  Works
+    best with "averages" summary data (one value per ZIP code).
+
+    Example usage:
+        plot_zipcode_map(averages_zip_df, "avg_daily_max")
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must have columns "ZCTA5CE20" and *average_summary*.  Should be
+        one row per ZIP code.
+    average_summary : str
+        Column to color-code on the map.
+    zcta_shapefile_path : str, optional
+        ZCTA shapefile path.  Defaults to bundled shapefile.
+    county_shapefile_path : str, optional
+        County shapefile path (used to derive the Illinois outline).
+    title : str, optional
+    cmap : str
+        Matplotlib colormap name.
+    ax : matplotlib Axes, optional
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+    """
+    from .zipcode_agg import _load_illinois_zctas, DEFAULT_ZCTA_SHAPEFILE as _ZCTA_SHP
+
+    zcta_path = zcta_shapefile_path or _ZCTA_SHP
+    county_path = county_shapefile_path or DEFAULT_SHAPEFILE
+    gdf_zctas = _load_illinois_zctas(zcta_path, county_path)
+
+    # Merge data onto ZCTA geometries
+    merged = gdf_zctas.merge(
+        df[["ZCTA5CE20", average_summary]].assign(
+            ZCTA5CE20=df["ZCTA5CE20"].astype(str)
+        ),
+        on="ZCTA5CE20",
+        how="left",
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 10))
+
+    merged.plot(
+        column=average_summary,
+        cmap=cmap,
+        legend=True,
+        edgecolor="black",
+        linewidth=0.15,
+        ax=ax,
+        missing_kwds={"color": "lightgrey", "label": "No data"},
+    )
+    ax.set_title(title or average_summary)
+    ax.set_axis_off()
     plt.tight_layout()
     return ax
