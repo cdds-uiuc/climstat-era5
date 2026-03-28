@@ -32,64 +32,17 @@ Key terms
 - **ZCTA5CE20**: The 5-digit ZIP code string stored in the shapefile.
 """
 
-import os
-
 import pandas as pd
 import xarray as xr
 import geopandas as gpd
 
-from .county_agg import _build_grid_points, _ensure_lon_180, IL_STATEFP
-
-
-# ── Default shapefile paths ──────────────────────────────────────────────
-DEFAULT_ZCTA_SHAPEFILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "data", "shapefiles", "zipcodes", "tl_2025_us_zcta520.shp",
+from .shapefiles import (
+    DEFAULT_COUNTY_SHAPEFILE,
+    DEFAULT_ZCTA_SHAPEFILE,
+    build_grid_points,
+    ensure_lon_180,
+    load_illinois_zctas,
 )
-
-DEFAULT_COUNTY_SHAPEFILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "data", "shapefiles", "county", "tl_2025_us_county.shp",
-)
-
-
-def _load_illinois_zctas(
-    zcta_shapefile: str,
-    county_shapefile: str,
-) -> gpd.GeoDataFrame:
-    """
-    Load ZCTA boundaries that intersect Illinois.
-
-    1. Build an Illinois outline from the county shapefile (using
-       ``where`` to load only IL counties).
-    2. Load ZCTAs that intersect the IL outline using the ``mask``
-       parameter, which pushes the spatial filter into the reader
-       (GDAL handles the spatial index internally, replacing the old
-       bbox + Python-side ``.intersects()`` approach).
-    3. Only the ``ZCTA5CE20`` column (plus geometry) is read via the
-       ``columns`` parameter.
-    """
-    # Build Illinois outline from counties
-    il_counties = gpd.read_file(
-        county_shapefile,
-        where=f"STATEFP = '{IL_STATEFP}'",
-        columns=["STATEFP"],
-    )
-    if il_counties.crs is None or il_counties.crs.to_epsg() != 4326:
-        il_counties = il_counties.to_crs("EPSG:4326")
-    il_outline = il_counties.union_all()
-
-    # Load only ZCTAs that intersect the IL outline, reading only the
-    # ZIP code identifier column (geometry is always included)
-    zctas = gpd.read_file(
-        zcta_shapefile,
-        mask=il_outline,
-        columns=["ZCTA5CE20"],
-    )
-    if zctas.crs is None or zctas.crs.to_epsg() != 4326:
-        zctas = zctas.to_crs("EPSG:4326")
-
-    return zctas.reset_index(drop=True)
 
 
 def build_zcta_mapping(
@@ -122,13 +75,13 @@ def build_zcta_mapping(
     if county_shapefile is None:
         county_shapefile = DEFAULT_COUNTY_SHAPEFILE
 
-    ds = _ensure_lon_180(ds)
+    ds = ensure_lon_180(ds)
 
     print("[zipcode_agg] Loading Illinois ZCTAs ...")
-    zctas = _load_illinois_zctas(zcta_shapefile, county_shapefile)
+    zctas = load_illinois_zctas(zcta_shapefile, county_shapefile)
     print(f"[zipcode_agg] {len(zctas)} ZCTAs intersecting Illinois")
 
-    points_gdf = _build_grid_points(ds)
+    points_gdf = build_grid_points(ds)
 
     print("[zipcode_agg] Assigning ZCTAs to nearest grid points ...")
     centroids = zctas[["ZCTA5CE20", "geometry"]].copy()
@@ -179,7 +132,7 @@ def aggregate_to_zipcodes(
         Columns: ZCTA5CE20, [time if present], plus all data variables.
     """
     # Step 1: fix longitude convention
-    ds = _ensure_lon_180(ds)
+    ds = ensure_lon_180(ds)
 
     # Step 2: get the ZCTA-to-grid-point mapping
     if zcta_mapping is not None:

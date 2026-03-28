@@ -67,8 +67,13 @@ DEFAULT_VARIABLES = [
 # Longitude is given in degrees east (standard -180 to 180 convention).
 # Internally this is converted to 0-360 when querying ERA5, which uses that
 # convention (e.g. -90°W becomes 270°E).
-DEFAULT_LON_BOUNDS = (-91.75, -86.75)   # western, eastern edge
-DEFAULT_LAT_BOUNDS = (37.0, 42.75)      # southern, northern edge
+#
+# IL counties extend to ~36.97°N / ~42.51°N and ~-91.51°E / ~-87.02°E.
+# IL ZCTAs extend slightly further (~36.75°N to ~42.72°N).
+# We add a 0.25° buffer (one ERA5 grid cell) on all sides to ensure
+# full coverage and consistent grids across all variables.
+DEFAULT_LON_BOUNDS = (-92.0, -86.75)    # western, eastern edge
+DEFAULT_LAT_BOUNDS = (36.5, 43.0)       # southern, northern edge
 
 # ── Google Cloud ARCO-ERA5 Zarr store ──────────────────────────────────────
 # This is the public URL for the Analysis-Ready, Cloud-Optimised (ARCO) ERA5
@@ -80,7 +85,7 @@ ZARR_URL = "gs://gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3
 # If the cached file for the current year is more than this many days old
 # (based on the end date in its filename), it is deleted and re-downloaded
 # to pick up newly available hours.
-CURRENT_YEAR_STALENESS_DAYS = 7
+CURRENT_YEAR_STALENESS_DAYS = 14
 
 
 # ===========================================================================
@@ -297,7 +302,7 @@ def _download_one(
 def extract_era5(
     variables: list[str] | None = None,
     year_start: int = 2016,
-    year_end: int = 2025,
+    year_end: int | None = None,
     lon_bounds: tuple[float, float] = DEFAULT_LON_BOUNDS,
     lat_bounds: tuple[float, float] = DEFAULT_LAT_BOUNDS,
     cache_dir: str = "data/cache",
@@ -322,8 +327,10 @@ def extract_era5(
     variables : list[str], optional
         ERA5 variable long names.  Defaults to the five variables needed
         for heat-metric computation (see DEFAULT_VARIABLES).
-    year_start, year_end : int
-        Inclusive year range to extract.
+    year_start : int
+        First year to extract (default 2016).
+    year_end : int or None
+        Last year to extract (inclusive).  Defaults to the current year.
     lon_bounds : (float, float)
         Western and eastern longitude bounds (degrees, -180 to 180).
     lat_bounds : (float, float)
@@ -340,6 +347,8 @@ def extract_era5(
     """
     if variables is None:
         variables = DEFAULT_VARIABLES
+    if year_end is None:
+        year_end = datetime.date.today().year
 
     # Create the cache directory if it doesn't exist yet
     os.makedirs(cache_dir, exist_ok=True)
@@ -394,9 +403,38 @@ def extract_era5(
         var_datasets.append(xr.concat(year_slices, dim="time"))
 
     # xr.merge combines the per-variable Datasets into a single Dataset
-    # containing all variables side by side (they share the same
-    # time/lat/lon coordinates)
-    merged = xr.merge(var_datasets)
+    # containing all variables side by side.  join="outer" handles the case
+    # where variables have slightly different lat/lon grids by padding edges
+    # with NaN (this shouldn't happen with the current bounding box, but is
+    # a safe default).
+    merged = xr.merge(var_datasets, join="outer")
+
+    # Trim trailing timesteps where ALL variables are NaN (ERA5 Zarr often
+    # includes timestamps beyond the last valid data).  Work backwards from
+    # the end to find the last timestep with at least one non-NaN value.
+    has_data = sum(
+        merged[v].isel(time=-1).notnull().any() for v in merged.data_vars
+    )
+    if has_data == 0:
+        # Last timestep is all-NaN — find where real data ends
+        any_valid = sum(
+            merged[v].notnull().any(dim=[d for d in merged[v].dims if d != "time"])
+            for v in merged.data_vars
+        ) > 0  # boolean DataArray over time
+
+        if not any_valid.any():
+            raise ValueError(
+                "[era5_extract] ERA5 dataset contains no valid data for any variable. "
+                "Check that the requested year range and bounding box overlap "
+                "with available data."
+            )
+
+        last_valid_idx = int(any_valid.values[::-1].argmax())
+        last_valid_idx = len(any_valid) - 1 - last_valid_idx
+        merged = merged.isel(time=slice(None, last_valid_idx + 1))
+        print(f"[era5_extract] Trimmed trailing NaN timesteps "
+              f"(valid data ends {pd.Timestamp(merged.time.values[-1]).date()})")
+
     print(f"[era5_extract] Done. Dataset spans "
           f"{pd.Timestamp(merged.time.values[0]).date()} -> "
           f"{pd.Timestamp(merged.time.values[-1]).date()}")

@@ -31,38 +31,17 @@ Key matplotlib concepts
 - **ax.imshow(array)**: Draws a 2D array as a colored image (heatmap).
 """
 
-import os
-
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
 
-
-# ── Default shapefile paths ───────────────────────────────────────────────
-DEFAULT_SHAPEFILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "data", "shapefiles", "county", "tl_2025_us_county.shp",
+from .shapefiles import (
+    DEFAULT_COUNTY_SHAPEFILE as DEFAULT_SHAPEFILE,
+    load_illinois_counties,
+    load_illinois_zctas,
 )
-
-# Illinois FIPS state code
-IL_STATEFP = "17"
-
-
-def _load_il_counties(shapefile_path: str | None = None) -> gpd.GeoDataFrame:
-    """Load Illinois county boundaries from shapefile, ensuring EPSG:4326."""
-    if shapefile_path is None:
-        shapefile_path = DEFAULT_SHAPEFILE
-    gdf_il = gpd.read_file(
-        shapefile_path,
-        where=f"STATEFP = '{IL_STATEFP}'",
-        columns=["STATEFP", "GEOID", "NAMELSAD"],
-    )
-    if gdf_il.crs is None or gdf_il.crs.to_epsg() != 4326:
-        gdf_il = gdf_il.to_crs("EPSG:4326")
-    return gdf_il
 
 
 # ===========================================================================
@@ -78,14 +57,25 @@ def plot_county_timeseries(
     date_range: tuple[str, str] | None = None,
     title: str | None = None,
     ax: plt.Axes | None = None,
+    df_forecast: pd.DataFrame | None = None,
+    era5_label: str = "ERA5",
+    forecast_label: str = "IFS Forecast",
+    era5_color: str = "#1f77b4",
+    forecast_color: str = "#ff7f0e",
 ) -> plt.Axes:
     """
     Line plot of a daily metric for a single region (county or ZIP code).
+
+    Optionally overlay a second data source (e.g. IFS forecast) in a
+    different color by passing *df_forecast*.
 
     Example usage:
         plot_county_timeseries(daily_df, "Cook County", "daily_max")
         plot_county_timeseries(daily_df, "61820", "daily_max",
                                region_col="ZCTA5CE20")
+        # Dual-source (ERA5 + IFS):
+        plot_county_timeseries(daily_df, "Cook County", "daily_max",
+                               df_forecast=daily_ifs_df)
 
     Parameters
     ----------
@@ -109,12 +99,25 @@ def plot_county_timeseries(
         Custom title.  If None, one is generated automatically.
     ax : matplotlib Axes, optional
         Axes to draw on.  If None, a new figure is created.
+    df_forecast : pd.DataFrame, optional
+        Second data source (e.g. IFS forecast) to overlay.  Must have
+        the same columns as *df*.  Plotted in *forecast_color*.
+    era5_label : str
+        Legend label for the primary data (default "ERA5").
+    forecast_label : str
+        Legend label for the forecast data (default "IFS Forecast").
+    era5_color : str
+        Color for the primary data line (default matplotlib blue).
+    forecast_color : str
+        Color for the forecast data line (default matplotlib orange).
 
     Returns
     -------
     matplotlib.axes.Axes
         The Axes object (useful for further customisation).
     """
+    dual_source = df_forecast is not None
+
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 4))
 
@@ -129,10 +132,34 @@ def plot_county_timeseries(
         times = times[mask]
         subset = subset.loc[mask]
 
-    ax.plot(times, subset[daily_summary], linewidth=0.8)
+    # Plot primary (ERA5) line
+    plot_kwargs = dict(linewidth=0.8)
+    if dual_source:
+        plot_kwargs.update(color=era5_color, label=era5_label)
+    ax.plot(times, subset[daily_summary], **plot_kwargs)
+
+    # Plot forecast (IFS) line if provided
+    # Only filter forecast by the start date — the whole point of forecast
+    # data is to extend beyond the ERA5 range, so we never clip the end.
+    if dual_source:
+        fc_subset = df_forecast[df_forecast[region_col] == county].sort_values(time_col)
+        fc_times = pd.to_datetime(fc_subset[time_col])
+        if date_range is not None:
+            fc_mask = fc_times >= start
+            fc_times = fc_times[fc_mask]
+            fc_subset = fc_subset.loc[fc_mask]
+        if len(fc_subset) > 0:
+            ax.plot(fc_times, fc_subset[daily_summary], linewidth=0.8,
+                    color=forecast_color, label=forecast_label)
+        ax.legend(loc="best")
 
     # Adapt tick spacing to the plotted time span
-    span_days = (times.max() - times.min()).days
+    all_times = times
+    if dual_source and len(fc_subset) > 0:
+        all_times = pd.to_datetime(
+            list(times) + list(fc_times)
+        )
+    span_days = (all_times.max() - all_times.min()).days
     if span_days > 730:  # > ~2 years
         ax.xaxis.set_major_locator(mdates.YearLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
@@ -166,6 +193,7 @@ def plot_county_map(
     title: str | None = None,
     cmap: str = "YlOrRd",
     ax: plt.Axes | None = None,
+    gdf: gpd.GeoDataFrame | None = None,
 ) -> plt.Axes:
     """
     Choropleth map of a metric value across Illinois counties.
@@ -191,13 +219,16 @@ def plot_county_map(
     cmap : str
         Matplotlib colormap name (e.g. "YlOrRd", "Blues", "coolwarm").
     ax : matplotlib Axes, optional
+    gdf : gpd.GeoDataFrame, optional
+        Pre-loaded Illinois county GeoDataFrame.  If provided,
+        *shapefile_path* is ignored and no shapefile I/O is performed.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
-    # Load county polygons
-    gdf_il = _load_il_counties(shapefile_path)
+    # Load county polygons (skip if pre-loaded)
+    gdf_il = gdf if gdf is not None else load_illinois_counties(shapefile_path)
 
     # Merge our data onto the county geometries using GEOID as the key.
     # "left" join keeps all counties; those with no data show as grey.
@@ -317,6 +348,7 @@ def plot_zipcode_map(
     title: str | None = None,
     cmap: str = "YlOrRd",
     ax: plt.Axes | None = None,
+    gdf: gpd.GeoDataFrame | None = None,
 ) -> plt.Axes:
     """
     Choropleth map of a metric value across Illinois ZIP codes (ZCTAs).
@@ -342,16 +374,18 @@ def plot_zipcode_map(
     cmap : str
         Matplotlib colormap name.
     ax : matplotlib Axes, optional
+    gdf : gpd.GeoDataFrame, optional
+        Pre-loaded Illinois ZCTA GeoDataFrame.  If provided,
+        shapefile path arguments are ignored.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
-    from .zipcode_agg import _load_illinois_zctas, DEFAULT_ZCTA_SHAPEFILE as _ZCTA_SHP
-
-    zcta_path = zcta_shapefile_path or _ZCTA_SHP
-    county_path = county_shapefile_path or DEFAULT_SHAPEFILE
-    gdf_zctas = _load_illinois_zctas(zcta_path, county_path)
+    if gdf is not None:
+        gdf_zctas = gdf
+    else:
+        gdf_zctas = load_illinois_zctas(zcta_shapefile_path, county_shapefile_path)
 
     # Merge data onto ZCTA geometries
     merged = gdf_zctas.merge(

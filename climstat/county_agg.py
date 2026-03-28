@@ -37,76 +37,17 @@ Key terms
   polygon").
 """
 
-import os
-
-import numpy as np
 import pandas as pd
 import xarray as xr
 import geopandas as gpd
-from shapely.geometry import Point
 
-
-# ── Default shapefile path (bundled in the repo) ──────────────────────────
-# __file__ is the path to this Python file (county_agg.py).
-# os.path.dirname(os.path.dirname(__file__)) goes up two levels to the
-# project root, then we join down into data/shapefiles/county/.
-DEFAULT_SHAPEFILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "data", "shapefiles", "county", "tl_2025_us_county.shp",
+from .shapefiles import (
+    DEFAULT_COUNTY_SHAPEFILE as DEFAULT_SHAPEFILE,
+    IL_STATEFP,
+    load_illinois_counties,
+    build_grid_points,
+    ensure_lon_180,
 )
-
-# Illinois FIPS state code — used to filter the national shapefile to IL only
-IL_STATEFP = "17"
-
-
-def _load_illinois_counties(shapefile_path: str) -> gpd.GeoDataFrame:
-    """
-    Load county boundaries for Illinois from the shapefile and ensure
-    the coordinate reference system is EPSG:4326 (standard lat/lon).
-
-    Uses ``where`` and ``columns`` parameters so only Illinois rows and
-    the columns we need are read from disk (faster than loading the full
-    national shapefile and filtering in Python).
-    """
-    gdf_il = gpd.read_file(
-        shapefile_path,
-        where=f"STATEFP = '{IL_STATEFP}'",
-        columns=["STATEFP", "GEOID", "NAMELSAD"],
-    )
-    # Ensure the CRS is lat/lon (EPSG:4326) so it matches our grid points
-    if gdf_il.crs is None or gdf_il.crs.to_epsg() != 4326:
-        gdf_il = gdf_il.to_crs("EPSG:4326")
-    return gdf_il
-
-
-def _build_grid_points(ds: xr.Dataset) -> gpd.GeoDataFrame:
-    """
-    Create a GeoDataFrame of Point geometries from the ERA5 lat/lon grid.
-
-    Takes the lat and lon coordinates from the xarray Dataset, creates
-    every (lon, lat) combination using meshgrid, and wraps each pair in
-    a Shapely Point object so GeoPandas can perform spatial operations.
-    """
-    # np.meshgrid creates 2D arrays of all lon/lat combinations
-    lons, lats = np.meshgrid(ds.lon.values, ds.lat.values)
-    points_df = pd.DataFrame({"lat": lats.flatten(), "lon": lons.flatten()})
-    points_df = points_df.drop_duplicates()
-    # Create a Shapely Point(longitude, latitude) for each grid cell
-    geometry = [Point(lon, lat) for lon, lat in zip(points_df.lon, points_df.lat)]
-    return gpd.GeoDataFrame(points_df, geometry=geometry, crs="EPSG:4326")
-
-
-def _ensure_lon_180(ds: xr.Dataset) -> xr.Dataset:
-    """
-    Convert longitude from 0-360 to -180:180 if needed.
-
-    ERA5 sometimes uses 0-360 longitudes (e.g. 270° instead of -90°).
-    Shapefiles use -180 to 180.  This ensures they match.
-    """
-    if ds["lon"].values.max() > 180:
-        ds = ds.assign_coords(lon=(ds["lon"] + 180) % 360 - 180)
-        ds = ds.sortby("lon")
-    return ds
 
 
 def aggregate_to_counties(
@@ -140,14 +81,14 @@ def aggregate_to_counties(
         shapefile_path = DEFAULT_SHAPEFILE
 
     # Step 1: fix longitude convention so grid and shapefile match
-    ds = _ensure_lon_180(ds)
+    ds = ensure_lon_180(ds)
 
     # Step 2: load Illinois county polygons from the shapefile
     print("[county_agg] Loading Illinois county shapefile ...")
-    gdf_counties = _load_illinois_counties(shapefile_path)
+    gdf_counties = load_illinois_counties(shapefile_path)
 
     # Step 3: create a Point for each ERA5 grid cell
-    points_gdf = _build_grid_points(ds)
+    points_gdf = build_grid_points(ds)
 
     # Step 4: spatial join — find which county polygon each grid point
     # falls inside.  "inner" means we only keep points that fall within

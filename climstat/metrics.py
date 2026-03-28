@@ -441,6 +441,12 @@ METRIC_REGISTRY = {
         "call": lambda ds: wbgt(ds["2m_temperature"], ds["2m_dewpoint_temperature"]),
         "unit": "K",
     },
+    "2m_temperature": {
+        "func": None,
+        "era5_vars": ["2m_temperature"],
+        "call": lambda ds: ds["2m_temperature"],
+        "unit": "K",  # compute_metrics auto-converts K→°F
+    },
 }
 
 
@@ -450,7 +456,7 @@ def compute_metrics(
     convert_to_fahrenheit: bool = True,
 ) -> dict[str, xr.DataArray]:
     """
-    Compute requested derived metrics from a raw ERA5 Dataset.
+    Compute requested derived metrics from a raw ERA5, IFS, or GFS Dataset.
 
     This is the main entry point for Step 2 of the pipeline.  It looks up
     each requested metric in METRIC_REGISTRY, calls its function, and
