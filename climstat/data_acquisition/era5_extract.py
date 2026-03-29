@@ -415,7 +415,7 @@ def extract_era5(
     # includes timestamps beyond the last valid data).  Find the minimum
     # common valid end across all variables so every variable has data at
     # every retained timestep.
-    has_data = int(sum(ho
+    has_data = int(sum(
         bool(merged[v].isel(time=-1).notnull().any()) for v in merged.data_vars
     ))
     if has_data == 0:
