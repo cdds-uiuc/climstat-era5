@@ -19,8 +19,11 @@ import os
 import pandas as pd
 import xarray as xr
 
+import numpy as np
+
 from .era5_extract import extract_era5
 from .ifs_extract import extract_ifs
+from .ensemble_extract import extract_ensemble
 from .metrics import METRIC_REGISTRY, compute_metrics
 from .statistics import daily_summary, averages_summary
 from .county_agg import aggregate_to_counties
@@ -303,6 +306,192 @@ def run_pipeline(
 
 
 # ===========================================================================
+# run_ensemble_pipeline — ensemble forecast processing
+# ===========================================================================
+
+def run_ensemble_pipeline(
+    ensemble_ds: xr.Dataset,
+    metrics: list[str],
+    thresholds: dict[str, dict[str, list[float]]],
+    shapefile_path: str,
+    zcta_shapefile_path: str,
+    output_dir: str,
+    convert_to_f: bool = True,
+    zcta_mapping: pd.DataFrame | None = None,
+    percentiles: tuple[int, ...] = (6, 33, 50, 66, 95),
+) -> dict:
+    """
+    Process ensemble forecast data: metrics -> daily summary per member ->
+    percentiles across members -> aggregate -> CSV.
+
+    Parameters
+    ----------
+    ensemble_ds : xr.Dataset
+        Gridded ensemble data with dims (member, time, lat, lon).
+    metrics : list[str]
+        Metric names to compute.
+    thresholds : dict
+        Threshold configuration.
+    shapefile_path, zcta_shapefile_path : str
+        Shapefile paths.
+    output_dir : str
+        Directory for output CSVs.
+    convert_to_f : bool
+        Convert to Fahrenheit.
+    zcta_mapping : pd.DataFrame, optional
+        Precomputed ZCTA mapping.
+    percentiles : tuple[int, ...]
+        Percentiles to compute across ensemble members.
+
+    Returns
+    -------
+    dict with keys: "start_str", "end_str", "zcta_mapping"
+    """
+    source_tag = "FORECAST"
+    n_members = len(ensemble_ds.member)
+
+    # ── Date range ────────────────────────────────────────────────────────
+    start_str = pd.Timestamp(ensemble_ds.time.values[0]).strftime("%Y%m%d")
+    end_str = pd.Timestamp(ensemble_ds.time.values[-1]).strftime("%Y%m%d")
+    print(f"  FORECAST data range: {start_str} -> {end_str} "
+          f"({n_members} members)")
+
+    # ── Check CSV cache ───────────────────────────────────────────────────
+    def _all_csvs_exist(name):
+        return all(
+            os.path.exists(
+                _output_csv_path(output_dir, "daily", name, start_str, end_str,
+                                 source_tag, region_tag)
+            )
+            for region_tag in ("counties", "zipcodes")
+        )
+
+    cached_metrics = []
+    uncached_metrics = []
+    for name in metrics:
+        if _all_csvs_exist(name):
+            cached_metrics.append(name)
+        else:
+            uncached_metrics.append(name)
+
+    if cached_metrics:
+        print(f"  FORECAST cached (skipping): {', '.join(cached_metrics)}")
+
+    if not uncached_metrics:
+        print("\nAll FORECAST metrics cached — skipping computation.")
+        if zcta_mapping is None:
+            zcta_mapping = build_zcta_mapping(
+                ensemble_ds.isel(member=0),
+                zcta_shapefile=zcta_shapefile_path,
+                county_shapefile=shapefile_path,
+            )
+        return {
+            "start_str": start_str,
+            "end_str": end_str,
+            "zcta_mapping": zcta_mapping,
+        }
+
+    # ── Process each member: metrics -> daily summary ─────────────────────
+    print(f"Computing FORECAST metrics for {n_members} members "
+          f"({', '.join(uncached_metrics)}) ...")
+
+    # member_dailies[metric_name][member_idx] = daily xr.Dataset
+    member_dailies: dict[str, list[xr.Dataset]] = {
+        name: [] for name in uncached_metrics
+    }
+
+    for m in range(n_members):
+        member_ds = ensemble_ds.isel(member=m)
+        metric_arrays = compute_metrics(
+            member_ds, metric_names=uncached_metrics,
+            convert_to_fahrenheit=convert_to_f,
+        )
+        for name, arr in metric_arrays.items():
+            above, below = get_thresholds(thresholds, name)
+            daily_ds = daily_summary(arr, thresholds=above, thresholds_below=below)
+            member_dailies[name].append(daily_ds)
+
+        if (m + 1) % 10 == 0 or m == n_members - 1:
+            print(f"  Members processed: {m + 1}/{n_members}")
+
+    del ensemble_ds  # free memory
+
+    # ── Compute percentiles across members at grid level ──────────────────
+    print("Computing percentiles across ensemble members ...")
+    percentile_datasets: dict[str, xr.Dataset] = {}
+
+    for name in uncached_metrics:
+        dailies = member_dailies[name]
+        # Get the list of data variables from the first member's daily output
+        daily_var_names = list(dailies[0].data_vars)
+        pct_data_vars = {}
+
+        for var_name in daily_var_names:
+            # Stack all members: shape (n_members, time, lat, lon)
+            stacked = np.stack(
+                [dailies[m][var_name].values for m in range(n_members)],
+                axis=0,
+            )
+            for pct in percentiles:
+                pct_values = np.percentile(stacked, pct, axis=0)
+                pct_key = f"{var_name}_p{pct}"
+                pct_data_vars[pct_key] = (
+                    ["time", "lat", "lon"], pct_values,
+                )
+
+        percentile_datasets[name] = xr.Dataset(
+            pct_data_vars,
+            coords=dailies[0].coords,
+        )
+        print(f"  {name}: {len(pct_data_vars)} percentile variables")
+
+    del member_dailies
+
+    # ── Build ZCTA mapping if needed ──────────────────────────────────────
+    if zcta_mapping is None:
+        sample_ds = list(percentile_datasets.values())[0]
+        zcta_mapping = build_zcta_mapping(
+            sample_ds,
+            zcta_shapefile=zcta_shapefile_path,
+            county_shapefile=shapefile_path,
+        )
+
+    # ── Aggregate to counties and ZIP codes ───────────────────────────────
+    daily_county = {}
+    daily_zipcode = {}
+
+    for name in uncached_metrics:
+        print(f"\n=== FORECAST {name} ===")
+        print("  Aggregating percentiles to counties ...")
+        daily_county[name] = aggregate_to_counties(
+            percentile_datasets[name], shapefile_path=shapefile_path,
+        )
+        print("  Aggregating percentiles to ZIP codes ...")
+        daily_zipcode[name] = aggregate_to_zipcodes(
+            percentile_datasets[name], zcta_mapping=zcta_mapping,
+        )
+
+    # ── Save CSVs ─────────────────────────────────────────────────────────
+    for name in uncached_metrics:
+        for region_tag in ("counties", "zipcodes"):
+            data = daily_county if region_tag == "counties" else daily_zipcode
+            out_path = _output_csv_path(
+                output_dir, "daily", name, start_str, end_str,
+                source_tag, region_tag,
+            )
+            data[name].to_csv(out_path, index=False)
+            print(f"  Saved: {out_path}")
+
+    print("\nFORECAST pipeline complete.")
+
+    return {
+        "start_str": start_str,
+        "end_str": end_str,
+        "zcta_mapping": zcta_mapping,
+    }
+
+
+# ===========================================================================
 # Module 1: acquire_data
 # ===========================================================================
 
@@ -311,13 +500,14 @@ def acquire_data(
     year_start: int,
     year_end: int,
     cache_dir: str = "data/cache",
+    forecast_days: int = 14,
 ) -> dict:
     """
-    Download ERA5 and IFS raw data (Module 1).
+    Download ERA5, IFS, and ensemble forecast raw data (Module 1).
 
     Determines which ERA5 variables are needed for the requested metrics,
-    downloads (or loads from cache) the ERA5 data, then fills the gap
-    between the last valid ERA5 day and today with IFS data.
+    downloads (or loads from cache) the ERA5 data, fills the gap with IFS,
+    and optionally fetches ensemble forecasts.
 
     Parameters
     ----------
@@ -327,12 +517,16 @@ def acquire_data(
         Year range for ERA5 extraction (inclusive).
     cache_dir : str
         Directory for raw NetCDF cache files.
+    forecast_days : int
+        Number of days of ensemble forecast to fetch (default 14).
+        Set to 0 to skip ensemble.
 
     Returns
     -------
     dict with keys:
         "era5_ds"       — xr.Dataset of ERA5 hourly data
         "ifs_ds"        — xr.Dataset of IFS hourly data, or None
+        "ensemble_ds"   — xr.Dataset with member dim, or None
         "era5_end_date" — datetime.date of last valid ERA5 day
     """
     # Determine which ERA5 variables are needed
@@ -372,9 +566,20 @@ def acquire_data(
     else:
         print("No IFS data needed (ERA5 is up to date).")
 
+    # Extract ensemble forecast
+    ensemble_ds = extract_ensemble(
+        era5_end_date=era5_end_date,
+        grid_lats=era5_lats,
+        grid_lons=era5_lons,
+        forecast_days=forecast_days,
+        cache_dir=cache_dir,
+        variables=needed_vars,
+    )
+
     return {
         "era5_ds": era5_ds,
         "ifs_ds": ifs_ds,
+        "ensemble_ds": ensemble_ds,
         "era5_end_date": era5_end_date,
     }
 
@@ -392,12 +597,13 @@ def process_data(
     zcta_shapefile_path: str,
     output_dir: str,
     convert_to_f: bool = True,
+    ensemble_ds: xr.Dataset | None = None,
 ) -> dict:
     """
     Compute metrics, statistics, and aggregation, then save CSVs (Module 2).
 
-    Runs the full pipeline for ERA5 (daily + averages) and, if available,
-    IFS (daily only).  Cached CSVs are skipped automatically.
+    Runs the full pipeline for ERA5 (daily + averages), IFS (daily only),
+    and ensemble forecast (daily percentiles only).
 
     Parameters
     ----------
@@ -417,14 +623,18 @@ def process_data(
         Directory for output CSVs.
     convert_to_f : bool
         Convert Kelvin-native metrics to Fahrenheit (default True).
+    ensemble_ds : xr.Dataset or None
+        Ensemble forecast data with dims (member, time, lat, lon).
 
     Returns
     -------
     dict with keys:
-        "era5_start"  — YYYYMMDD start date for ERA5 outputs
-        "era5_end"    — YYYYMMDD end date for ERA5 outputs
-        "ifs_start"   — YYYYMMDD start date for IFS outputs, or None
-        "ifs_end"     — YYYYMMDD end date for IFS outputs, or None
+        "era5_start"      — YYYYMMDD start date for ERA5 outputs
+        "era5_end"        — YYYYMMDD end date for ERA5 outputs
+        "ifs_start"       — YYYYMMDD start date for IFS outputs, or None
+        "ifs_end"         — YYYYMMDD end date for IFS outputs, or None
+        "forecast_start"  — YYYYMMDD start date for ensemble outputs, or None
+        "forecast_end"    — YYYYMMDD end date for ensemble outputs, or None
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -460,11 +670,31 @@ def process_data(
         ifs_start = ifs["start_str"]
         ifs_end = ifs["end_str"]
 
+    forecast_start = None
+    forecast_end = None
+
+    # Ensemble forecast: percentiles across members
+    if ensemble_ds is not None:
+        forecast = run_ensemble_pipeline(
+            ensemble_ds,
+            metrics=metrics,
+            thresholds=thresholds,
+            shapefile_path=shapefile_path,
+            zcta_shapefile_path=zcta_shapefile_path,
+            output_dir=output_dir,
+            convert_to_f=convert_to_f,
+            zcta_mapping=era5["zcta_mapping"],
+        )
+        forecast_start = forecast["start_str"]
+        forecast_end = forecast["end_str"]
+
     return {
         "era5_start": era5["start_str"],
         "era5_end": era5["end_str"],
         "ifs_start": ifs_start,
         "ifs_end": ifs_end,
+        "forecast_start": forecast_start,
+        "forecast_end": forecast_end,
     }
 
 
@@ -486,6 +716,8 @@ def visualize_data(
     example_zipcode: str = "60601",
     timeseries_summary: str = "daily_max",
     map_summary: str = "avg_daily_max",
+    forecast_start: str | None = None,
+    forecast_end: str | None = None,
 ) -> None:
     """
     Load output CSVs and produce plots for all metrics (Module 3).
@@ -495,8 +727,8 @@ def visualize_data(
     the right files.
 
     For each metric produces:
-    - County time series (full range + last 2 months), ERA5 + IFS overlay
-    - ZIP code time series (full range + last 2 months), ERA5 + IFS overlay
+    - County time series (full range + last 2 months), ERA5 + IFS + ensemble overlay
+    - ZIP code time series (full range + last 2 months), ERA5 + IFS + ensemble overlay
     - County averages choropleth map (ERA5 only)
     - ZIP code averages choropleth map (ERA5 only)
 
@@ -526,14 +758,19 @@ def visualize_data(
     map_summary : str
         Averages column to plot on maps (e.g. "avg_daily_max",
         "avg_hours_per_year_above_90").
+    forecast_start, forecast_end : str or None
+        YYYYMMDD date range for ensemble forecast outputs (None if no forecast).
     """
     # Pre-load shapefiles once for reuse across all metrics
     counties_gdf = load_illinois_counties(shapefile_path)
     zctas_gdf = load_illinois_zctas(zcta_shapefile_path, shapefile_path)
 
-    # Recent date range for zoomed time series
+    # Recent date range for zoomed time series — extend to cover forecast
     recent_start = (pd.Timestamp.today() - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
-    recent_end = (pd.Timestamp.today() + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
+    if forecast_end is not None:
+        recent_end = (pd.Timestamp(forecast_end) + pd.Timedelta(days=2)).strftime("%Y-%m-%d")
+    else:
+        recent_end = (pd.Timestamp.today() + pd.Timedelta(days=7)).strftime("%Y-%m-%d")
     recent_range = (recent_start, recent_end)
 
     for metric in metrics:
@@ -560,6 +797,15 @@ def visualize_data(
             ifs_daily_county = ifs["daily_counties"]
             ifs_daily_zip = ifs["daily_zipcodes"]
 
+        # Load ensemble forecast CSVs (if available)
+        forecast_daily_county = None
+        forecast_daily_zip = None
+        if forecast_start is not None:
+            fc = load_metric(metric, output_dir, forecast_start, forecast_end,
+                             source_label="forecast")
+            forecast_daily_county = fc["daily_counties"]
+            forecast_daily_zip = fc["daily_zipcodes"]
+
         # ── Time series plots ─────────────────────────────────────────────
         if timeseries_summary not in daily_county.columns:
             print(f"  Skipping time series: '{timeseries_summary}' not in daily columns for {metric}. "
@@ -572,6 +818,7 @@ def visualize_data(
                 daily_summary=timeseries_summary,
                 title=f"{metric} {timeseries_summary} — {example_county} (full range)",
                 df_forecast=ifs_daily_county,
+                df_ensemble=forecast_daily_county,
             )
             plot_county_timeseries(
                 daily_county,
@@ -580,6 +827,7 @@ def visualize_data(
                 date_range=recent_range,
                 title=f"{metric} {timeseries_summary} — {example_county} (recent)",
                 df_forecast=ifs_daily_county,
+                df_ensemble=forecast_daily_county,
             )
 
             # ZIP code time series
@@ -590,6 +838,7 @@ def visualize_data(
                 region_col="ZCTA5CE20",
                 title=f"{metric} {timeseries_summary} — ZIP {example_zipcode} (full range)",
                 df_forecast=ifs_daily_zip,
+                df_ensemble=forecast_daily_zip,
             )
             plot_county_timeseries(
                 daily_zip,
@@ -599,6 +848,7 @@ def visualize_data(
                 date_range=recent_range,
                 title=f"{metric} {timeseries_summary} — ZIP {example_zipcode} (recent)",
                 df_forecast=ifs_daily_zip,
+                df_ensemble=forecast_daily_zip,
             )
 
         # ── County averages map (ERA5 only) ───────────────────────────────

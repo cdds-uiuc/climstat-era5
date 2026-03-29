@@ -27,6 +27,7 @@ functions and is the main entry point.
 
 from . import era5_extract
 from . import ifs_extract
+from . import ensemble_extract
 from . import metrics
 from . import statistics
 from . import shapefiles

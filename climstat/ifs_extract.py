@@ -79,7 +79,7 @@ BATCH_SIZE = 50
 IFS_CACHE_STALENESS_HOURS = 6
 
 # ── Retry settings for API calls ─────────────────────────────────────────
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 RETRY_BACKOFF_SECONDS = 2
 
 
@@ -155,9 +155,10 @@ def _fetch_batch(
 
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
             if attempt < MAX_RETRIES - 1:
-                wait = RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                is_rate_limit = isinstance(e, urllib.error.HTTPError) and e.code == 429
+                wait = 30 if is_rate_limit else RETRY_BACKOFF_SECONDS * (2 ** attempt)
                 print(f"[ifs_extract]   Retry {attempt + 1}/{MAX_RETRIES} "
-                      f"after {wait}s ({e})")
+                      f"after {wait}s ({'rate limited' if is_rate_limit else e})")
                 _time.sleep(wait)
             else:
                 raise RuntimeError(
@@ -566,9 +567,9 @@ def extract_ifs(
                                  hourly_vars=openmeteo_vars)
         all_responses.extend(responses)
 
-        # Small delay between batches to be a good API citizen
+        # Delay between batches to avoid rate limiting
         if batch_idx < n_batches - 1:
-            _time.sleep(0.5)
+            _time.sleep(3.0)
 
     print(f"[ifs_extract] All {n_batches} batches fetched. Assembling dataset ...")
 
