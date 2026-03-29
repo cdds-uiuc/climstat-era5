@@ -94,7 +94,7 @@ def aggregate_to_counties(
     # falls inside.  "inner" means we only keep points that fall within
     # a county (grid points over Lake Michigan or outside IL are dropped).
     print("[county_agg] Performing spatial join ...")
-    joined = gpd.sjoin(points_gdf, gdf_counties, how="inner", predicate="intersects")
+    joined = gpd.sjoin(points_gdf, gdf_counties, how="inner", predicate="within")
 
     n_counties = joined["GEOID"].nunique()
     n_points = len(joined)
@@ -118,7 +118,7 @@ def aggregate_to_counties(
             centroids[["GEOID", "NAMELSAD", "geometry"]],
             points_gdf[["lat", "lon", "geometry"]],
             how="left",
-        )[["GEOID", "NAMELSAD", "lat", "lon"]]
+        )[["GEOID", "NAMELSAD", "lat", "lon"]].drop_duplicates(subset="GEOID")
         # Append these fallback assignments to the main joined table
         joined = pd.concat(
             [joined[["lat", "lon", "NAMELSAD", "GEOID"]], nearest],
@@ -130,6 +130,12 @@ def aggregate_to_counties(
     # After this merge, each row has: time, lat, lon, data values, county name.
     print("[county_agg] Merging with full time-series data ...")
     df = ds.to_dataframe().reset_index()
+    # Round lat/lon to avoid float-precision mismatches during merge
+    decimals = 4
+    df["lat"] = df["lat"].round(decimals)
+    df["lon"] = df["lon"].round(decimals)
+    joined["lat"] = joined["lat"].round(decimals)
+    joined["lon"] = joined["lon"].round(decimals)
     result = df.merge(
         joined[["lat", "lon", "NAMELSAD", "GEOID"]],
         on=["lat", "lon"],

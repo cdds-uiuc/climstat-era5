@@ -143,6 +143,13 @@ def aggregate_to_zipcodes(
     # Step 3: convert xarray to DataFrame and merge ZCTA labels
     print("[zipcode_agg] Merging with full time-series data ...")
     df = ds.to_dataframe().reset_index()
+    # Round lat/lon to avoid float-precision mismatches during merge
+    decimals = 4
+    df["lat"] = df["lat"].round(decimals)
+    df["lon"] = df["lon"].round(decimals)
+    nearest = nearest.copy()
+    nearest["lat"] = nearest["lat"].round(decimals)
+    nearest["lon"] = nearest["lon"].round(decimals)
     result = df.merge(nearest, on=["lat", "lon"], how="inner")
 
     # Step 4: group by ZCTA (and time if present) and average

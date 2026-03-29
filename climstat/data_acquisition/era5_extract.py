@@ -392,7 +392,9 @@ def extract_era5(
             cached = _find_cached(cache_dir, variable, yr)
             if cached:
                 print(f"[era5_extract] Cache hit: {os.path.basename(cached)}")
-                year_slices.append(xr.open_dataset(cached))
+                ds_cached = xr.open_dataset(cached)
+                year_slices.append(ds_cached.load())
+                ds_cached.close()
             else:
                 ds = _download_one(reanalysis, variable, yr,
                                    lon_bounds, lat_bounds, cache_dir)
@@ -410,27 +412,33 @@ def extract_era5(
     merged = xr.merge(var_datasets, join="outer")
 
     # Trim trailing timesteps where ALL variables are NaN (ERA5 Zarr often
-    # includes timestamps beyond the last valid data).  Work backwards from
-    # the end to find the last timestep with at least one non-NaN value.
-    has_data = sum(
-        merged[v].isel(time=-1).notnull().any() for v in merged.data_vars
-    )
+    # includes timestamps beyond the last valid data).  Find the minimum
+    # common valid end across all variables so every variable has data at
+    # every retained timestep.
+    has_data = int(sum(ho
+        bool(merged[v].isel(time=-1).notnull().any()) for v in merged.data_vars
+    ))
     if has_data == 0:
-        # Last timestep is all-NaN — find where real data ends
-        any_valid = sum(
-            merged[v].notnull().any(dim=[d for d in merged[v].dims if d != "time"])
-            for v in merged.data_vars
-        ) > 0  # boolean DataArray over time
+        # Last timestep is all-NaN — find where real data ends per variable
+        # and take the minimum across variables (so all vars are valid).
+        last_valid_indices = []
+        for v in merged.data_vars:
+            valid_mask = merged[v].notnull().any(
+                dim=[d for d in merged[v].dims if d != "time"]
+            )
+            if not valid_mask.any():
+                continue
+            idx = int(valid_mask.values[::-1].argmax())
+            last_valid_indices.append(len(valid_mask) - 1 - idx)
 
-        if not any_valid.any():
+        if not last_valid_indices:
             raise ValueError(
                 "[era5_extract] ERA5 dataset contains no valid data for any variable. "
                 "Check that the requested year range and bounding box overlap "
                 "with available data."
             )
 
-        last_valid_idx = int(any_valid.values[::-1].argmax())
-        last_valid_idx = len(any_valid) - 1 - last_valid_idx
+        last_valid_idx = min(last_valid_indices)
         merged = merged.isel(time=slice(None, last_valid_idx + 1))
         print(f"[era5_extract] Trimmed trailing NaN timesteps "
               f"(valid data ends {pd.Timestamp(merged.time.values[-1]).date()})")

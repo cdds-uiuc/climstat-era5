@@ -179,6 +179,9 @@ def plot_county_timeseries(
         all_times = pd.to_datetime(
             list(times) + list(fc_times)
         )
+    if len(all_times) == 0:
+        ax.set_title(title or f"{daily_summary} — {county} (no data)")
+        return ax
     span_days = (all_times.max() - all_times.min()).days
     if span_days > 730:  # > ~2 years
         ax.xaxis.set_major_locator(mdates.YearLocator())

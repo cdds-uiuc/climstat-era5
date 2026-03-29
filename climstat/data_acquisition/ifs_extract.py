@@ -367,6 +367,7 @@ def _find_ifs_cached(
         if age_hours > IFS_CACHE_STALENESS_HOURS:
             print(f"[ifs_extract] Cache {os.path.basename(path)} is "
                   f"{age_hours:.1f}h old — will re-download.")
+            os.remove(path)
             return False
 
     return True
@@ -385,7 +386,9 @@ def _load_ifs_cached(
             cache_dir, _ifs_var_cache_filename(var, ifs_start, ifs_end),
         )
         print(f"[ifs_extract] Cache hit: {os.path.basename(path)}")
-        datasets.append(xr.open_dataset(path))
+        ds = xr.open_dataset(path)
+        datasets.append(ds.load())
+        ds.close()
     return xr.merge(datasets)
 
 

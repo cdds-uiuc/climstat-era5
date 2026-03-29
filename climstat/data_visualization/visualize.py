@@ -60,7 +60,7 @@ def load_metric(
                 # Keep ZCTA5CE20 as string so "61820" matches the parameter
                 result[key] = pd.read_csv(path, dtype={"ZCTA5CE20": str})
             else:
-                result[key] = pd.read_csv(path)
+                result[key] = pd.read_csv(path, dtype={"GEOID": str})
     return result
 
 

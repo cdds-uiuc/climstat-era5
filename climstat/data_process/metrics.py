@@ -144,7 +144,7 @@ def relative_humidity(dewpoint_k: xr.DataArray, t2m_k: xr.DataArray) -> xr.DataA
     """
     vp = vapor_pressure(dewpoint_k)       # actual vapor pressure
     vp_sat = vapor_pressure(t2m_k)        # saturation vapor pressure
-    return vp / vp_sat
+    return (vp / vp_sat).clip(0, 1)
 
 
 # ===========================================================================
@@ -196,10 +196,11 @@ def heat_index(t2m_k: xr.DataArray, dewpoint_k: xr.DataArray) -> xr.DataArray:
     )
     # xr.where(condition, value_if_true, value_if_false) — works element-wise
     # on the entire array, like a vectorized if/else
-    hi = xr.where(hi > 80, hi_rothfusz, hi)
+    avg = (hi + T_F) / 2
+    hi = xr.where(avg >= 80, hi_rothfusz, hi)
 
     # Step 3: correction for very dry air (RH < 13%, T between 80-112°F)
-    adj_low_rh = hi_rothfusz - ((13 - RH_p) / 4) * np.sqrt((17 - abs(T_F - 95)) / 17)
+    adj_low_rh = hi_rothfusz - ((13 - RH_p) / 4) * np.sqrt((17 - np.abs(T_F - 95)) / 17)
     hi = xr.where((RH_p < 13) & (T_F > 80) & (T_F < 112), adj_low_rh, hi)
 
     # Step 4: correction for very humid air (RH > 85%, T between 80-87°F)
@@ -260,10 +261,10 @@ def wet_bulb_temperature(t2m_k: xr.DataArray, dewpoint_k: xr.DataArray) -> xr.Da
     # Stull's empirical approximation — a sum of arctan terms that was
     # curve-fitted to match the exact wet bulb temperature
     T_w = (
-        t_C * np.arctan2(0.151977 * ((RH_p + 8.313659) ** 0.5), 1)
-        + np.arctan2((t_C + RH_p), 1)
-        - np.arctan2((RH_p - 1.676331), 1)
-        + 0.00391838 * (RH_p ** (3 / 2)) * np.arctan2(0.023101 * RH_p, 1)
+        t_C * np.arctan(0.151977 * ((RH_p + 8.313659) ** 0.5))
+        + np.arctan(t_C + RH_p)
+        - np.arctan(RH_p - 1.676331)
+        + 0.00391838 * (RH_p ** (3 / 2)) * np.arctan(0.023101 * RH_p)
         - 4.686035
     )
 
