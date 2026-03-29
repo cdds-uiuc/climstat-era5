@@ -35,3 +35,9 @@ dependencies:
     # ── Dashboard ───────────────────────────────────────────────────────
     - voila
     - ipywidgets>=8.0
+    # ── Interactive dashboard (Panel / HoloViz) ────────────────────────
+    - panel>=1.4
+    - hvplot>=0.10
+    - geoviews>=1.12
+    - bokeh>=3.4
+    - holoviews>=1.19
