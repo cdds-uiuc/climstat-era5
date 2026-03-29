@@ -11,7 +11,10 @@
       "WebFetch(domain:weatherlinguist.bearblog.dev)",
       "Bash(python3:*)",
       "WebFetch(domain:open-meteo.com)",
-      "WebFetch(domain:openmeteo.substack.com)"
+      "WebFetch(domain:openmeteo.substack.com)",
+      "Bash(source ~/miniforge3/etc/profile.d/conda.sh)",
+      "Bash(conda activate:*)",
+      "Bash(python -c \":*)"
     ]
   },
   "sandbox": {
