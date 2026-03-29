@@ -37,7 +37,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from .shapefiles import (
+from ..data_process.shapefiles import (
     DEFAULT_COUNTY_SHAPEFILE as DEFAULT_SHAPEFILE,
     load_illinois_counties,
     load_illinois_zctas,
@@ -59,13 +59,12 @@ def plot_county_timeseries(
     ax: plt.Axes | None = None,
     df_forecast: pd.DataFrame | None = None,
     era5_label: str = "ERA5",
+    ifs_gap_label: str = "IFS Gap-fill",
     forecast_label: str = "IFS Forecast",
     era5_color: str = "#1f77b4",
+    ifs_gap_color: str = "#2ca02c",
     forecast_color: str = "#ff7f0e",
-    df_ensemble: pd.DataFrame | None = None,
-    ensemble_label: str = "IFS Ensemble",
-    ensemble_color: str = "#ffbb78",
-    ensemble_alpha: float = 0.3,
+    marker: str | None = None,
 ) -> plt.Axes:
     """
     Line plot of a daily metric for a single region (county or ZIP code).
@@ -114,16 +113,6 @@ def plot_county_timeseries(
         Color for the primary data line (default matplotlib blue).
     forecast_color : str
         Color for the forecast data line (default matplotlib orange).
-    df_ensemble : pd.DataFrame, optional
-        Ensemble forecast data with percentile columns like
-        ``{daily_summary}_p6``, ``{daily_summary}_p50``, etc.
-        Plotted as uncertainty bands and a dashed median line.
-    ensemble_label : str
-        Legend label for the ensemble median (default "IFS Ensemble").
-    ensemble_color : str
-        Color for the ensemble bands and median line.
-    ensemble_alpha : float
-        Opacity for the outer ensemble band (inner band uses 2x).
 
     Returns
     -------
@@ -131,7 +120,6 @@ def plot_county_timeseries(
         The Axes object (useful for further customisation).
     """
     dual_source = df_forecast is not None
-    has_ensemble = df_ensemble is not None
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 4))
@@ -148,14 +136,13 @@ def plot_county_timeseries(
         subset = subset.loc[mask]
 
     # Plot primary (ERA5) line
-    plot_kwargs = dict(linewidth=0.8)
-    if dual_source or has_ensemble:
+    marker_kwargs = dict(marker=marker, markersize=3) if marker else {}
+    plot_kwargs = dict(linewidth=0.8, **marker_kwargs)
+    if dual_source:
         plot_kwargs.update(color=era5_color, label=era5_label)
     ax.plot(times, subset[daily_summary], **plot_kwargs)
 
-    # Plot forecast (IFS) line if provided
-    # Only filter forecast by the start date — the whole point of forecast
-    # data is to extend beyond the ERA5 range, so we never clip the end.
+    # Plot IFS line if provided, split into gap-fill (past) and forecast (future)
     fc_subset = pd.DataFrame()
     if dual_source:
         fc_subset = df_forecast[df_forecast[region_col] == county].sort_values(time_col)
@@ -165,50 +152,22 @@ def plot_county_timeseries(
             fc_times = fc_times[fc_mask]
             fc_subset = fc_subset.loc[fc_mask]
         if len(fc_subset) > 0:
-            ax.plot(fc_times, fc_subset[daily_summary], linewidth=0.8,
-                    color=forecast_color, label=forecast_label)
+            today = pd.Timestamp.today().normalize()
+            past_mask = fc_times <= today
+            future_mask = fc_times >= today
+            # Gap-fill portion (up to today)
+            if past_mask.any():
+                ax.plot(fc_times[past_mask], fc_subset.loc[past_mask, daily_summary],
+                        linewidth=0.8, color=ifs_gap_color, label=ifs_gap_label,
+                        **marker_kwargs)
+            # Forecast portion (today onward)
+            if future_mask.any():
+                ax.plot(fc_times[future_mask], fc_subset.loc[future_mask, daily_summary],
+                        linewidth=0.8, color=forecast_color, label=forecast_label,
+                        linestyle="--", **marker_kwargs)
 
-    # Plot ensemble bands if provided
-    ens_subset = pd.DataFrame()
-    if has_ensemble:
-        ens_subset = df_ensemble[df_ensemble[region_col] == county].sort_values(time_col)
-        ens_times = pd.to_datetime(ens_subset[time_col])
-        if date_range is not None:
-            ens_mask = ens_times >= start
-            ens_times = ens_times[ens_mask]
-            ens_subset = ens_subset.loc[ens_mask]
-
-        # Look for percentile columns matching the requested daily_summary
-        p6_col = f"{daily_summary}_p6"
-        p33_col = f"{daily_summary}_p33"
-        p50_col = f"{daily_summary}_p50"
-        p66_col = f"{daily_summary}_p66"
-        p95_col = f"{daily_summary}_p95"
-
-        if len(ens_subset) > 0 and p50_col in ens_subset.columns:
-            # Outer band: p6-p95
-            if p6_col in ens_subset.columns and p95_col in ens_subset.columns:
-                ax.fill_between(
-                    ens_times, ens_subset[p6_col], ens_subset[p95_col],
-                    alpha=ensemble_alpha, color=ensemble_color,
-                    label="Ensemble p6–p95",
-                )
-            # Inner band: p33-p66
-            if p33_col in ens_subset.columns and p66_col in ens_subset.columns:
-                ax.fill_between(
-                    ens_times, ens_subset[p33_col], ens_subset[p66_col],
-                    alpha=ensemble_alpha * 2, color=ensemble_color,
-                    label="Ensemble p33–p66",
-                )
-            # Median line
-            ax.plot(
-                ens_times, ens_subset[p50_col], linewidth=1.0,
-                linestyle="--", color=forecast_color,
-                label=f"{ensemble_label} (p50)",
-            )
-
-    # Add "today" vertical line when ensemble or forecast data is present
-    if has_ensemble or dual_source:
+    # Add "today" vertical line when forecast data is present
+    if dual_source:
         today = pd.Timestamp.today().normalize()
         ax.axvline(today, color="grey", linestyle="--", linewidth=0.7,
                    alpha=0.6, label="Today")
@@ -219,10 +178,6 @@ def plot_county_timeseries(
     if dual_source and len(fc_subset) > 0:
         all_times = pd.to_datetime(
             list(times) + list(fc_times)
-        )
-    if has_ensemble and len(ens_subset) > 0:
-        all_times = pd.to_datetime(
-            list(all_times) + list(ens_times)
         )
     span_days = (all_times.max() - all_times.min()).days
     if span_days > 730:  # > ~2 years

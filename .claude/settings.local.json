@@ -9,7 +9,23 @@
       "WebFetch(domain:docs.earthmover.io)",
       "WebFetch(domain:discourse.pangeo.io)",
       "WebFetch(domain:weatherlinguist.bearblog.dev)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebFetch(domain:open-meteo.com)",
+      "WebFetch(domain:openmeteo.substack.com)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "allowWrite": [
+        "/Users/cristi/Desktop/claude/climstat-era5"
+      ],
+      "denyRead": [
+        "/"
+      ],
+      "allowRead": [
+        "/Users/cristi"
+      ]
+    }
   }
 }
