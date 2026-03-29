@@ -240,6 +240,21 @@ As a result, first-run downloads are slow (~5 min per variable per year on a typ
 
 ---
 
+## To do / to fix:
+
+### Geopandas:
+The join methods in geopandas is simplistic and may give us biased estimates of county and zipcode average. There is no area weighting and no spatial interpolation. Nearest neighbor approach gives mayn zipcods teeh same value .There may be other issues with geopandas. 
+
+### Ensemble forecast
+We tried to download and use the ensemble IFS forecast from open-meteo. However, we very quickly ran into api call limits with the free tier. 
+
+We need ot find another way to get ensemble forecasts if we want to show uncertainty in fuuture data. 
+
+ ###
+ Historical data sets. Datasets other than ERA5 exist, and may be appropriate for the last decade or so of historical data. The prime candidate is URMA for historical data, followed by HRRR or ERA5-Land.  
+
+
+
 ## Contact
 
 Cristi Proistosescu — cristi@illinois.edu
