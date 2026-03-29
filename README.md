@@ -7,7 +7,7 @@ This repository contains a modular pipeline to extract variables from ERA5 gridd
 ## Supported Datasets
 
 - **ERA5** reanalysis at 0.25° resolution (~28 km), accessed from the [Google Cloud ARCO-ERA5 Zarr store](https://cloud.google.com/storage/docs/public-datasets/era5)
-- **IFS** (ECMWF Integrated Forecasting System) via the [Open-Meteo ECMWF API](https://open-meteo.com/en/docs/ecmwf-api), used to fill the ~5-7 day gap between ERA5 availability and the present day
+- **IFS** (ECMWF Integrated Forecasting System) via the [Open-Meteo ECMWF API](https://open-meteo.com/en/docs/ecmwf-api), used to fill the ~5-7 day gap between ERA5 availability and the present day, and optionally extend into the future as a deterministic forecast
 
 ---
 
@@ -40,13 +40,13 @@ For each climate metric, the pipeline computes two levels of summary statistics:
 - Average days per year above/below each threshold
 - Average hours per year above/below each threshold
 
-> **Note:** IFS data produces daily statistics only (no period averages), since it covers only a short gap period.
+> **Note:** IFS data produces daily statistics only (no period averages), since it covers only a short gap/forecast period.
 
 ---
 
 ## Pipeline Architecture
 
-The pipeline is organized into three modules, called from a simplified notebook:
+The pipeline is organized into three subpackages, called from a simplified notebook:
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
@@ -60,15 +60,19 @@ The pipeline is organized into three modules, called from a simplified notebook:
 └───────────────────────────────────────────────────────────────┘
        │                    │                    │
        ▼                    ▼                    ▼
-  era5_extract.py     metrics.py          visualization.py
-  ifs_extract.py      statistics.py        (reads from CSV)
-                      county_agg.py
-                      zipcode_agg.py
+  data_acquisition/    data_process/       data_visualization/
+  ├ era5_extract.py    ├ metrics.py        ├ visualization.py
+  └ ifs_extract.py     ├ statistics.py     └ (reads from CSV)
+                       ├ county_agg.py
+                       ├ zipcode_agg.py
+                       └ shapefiles.py
 ```
 
 ### Module 1 — Acquire raw data (`acquire_data()`)
 
 Downloads ERA5 data from Google Cloud and caches it locally as NetCDF files — **one file per variable per year**. Then fills the gap between the last valid ERA5 day and yesterday with IFS data from Open-Meteo, cached as **one file per variable** (matching the ERA5 pattern). Only the ERA5 variables needed by the requested metrics are downloaded for both ERA5 and IFS.
+
+Optionally extends the IFS data into the future as a deterministic forecast (controlled by the `forecast_days` parameter, e.g. 7 for a 1-week forecast).
 
 ERA5 trailing NaN timesteps are automatically trimmed to find the true last day of valid data.
 
@@ -86,8 +90,10 @@ Includes CSV-level caching: if output CSVs already exist for a metric's date ran
 ### Module 3 — Visualize (`visualize_data()`)
 
 Reads from CSV files only — can run independently. Produces:
-- County and ZIP code time series (full range + last 2 months zoom), with ERA5 and IFS data overlaid in different colors
+- County and ZIP code time series (full range + last month zoom), with ERA5, IFS gap-fill, and IFS forecast shown in distinct colors and styles
 - County and ZIP code choropleth maps of average statistics (ERA5 only)
+
+The recent time series plots use line+marker style for readability. IFS gap-fill data (past) is shown in green, while IFS forecast data (future) is shown as a dashed orange line.
 
 ---
 
@@ -99,20 +105,25 @@ climstat-era5/
 ├── environment.yml                # Conda environment
 ├── climstat/                      # Python package
 │   ├── __init__.py                # Package init; exports acquire/process/visualize
-│   ├── era5_extract.py            # ERA5 download + per-variable-per-year caching
-│   ├── ifs_extract.py             # IFS download + per-variable caching
-│   ├── metrics.py                 # Heat/cold metric formulas (METRIC_REGISTRY)
-│   ├── statistics.py              # Daily and period-average summary statistics
-│   ├── shapefiles.py              # Shared spatial utilities (IL county/ZCTA loading)
-│   ├── county_agg.py              # Spatial aggregation to IL counties
-│   ├── zipcode_agg.py             # Spatial aggregation to IL ZIP codes (ZCTAs)
-│   ├── pipeline.py                # Orchestration: acquire, process, visualize
-│   └── visualization.py           # Plotting utilities (time series, maps, heatmaps)
+│   ├── data_acquisition/          # Module 1: raw data downloads
+│   │   ├── acquire.py             # Top-level acquire_data() orchestration
+│   │   ├── era5_extract.py        # ERA5 download + per-variable-per-year caching
+│   │   └── ifs_extract.py         # IFS download + per-variable caching + forecast
+│   ├── data_process/              # Module 2: metrics, statistics, aggregation
+│   │   ├── process.py             # Top-level process_data() orchestration
+│   │   ├── metrics.py             # Heat/cold metric formulas (METRIC_REGISTRY)
+│   │   ├── statistics.py          # Daily and period-average summary statistics
+│   │   ├── shapefiles.py          # Shared spatial utilities (IL county/ZCTA loading)
+│   │   ├── county_agg.py          # Spatial aggregation to IL counties
+│   │   └── zipcode_agg.py         # Spatial aggregation to IL ZIP codes (ZCTAs)
+│   └── data_visualization/        # Module 3: plots and maps
+│       ├── visualize.py           # Top-level visualize_data() orchestration
+│       └── visualization.py       # Plotting utilities (time series, maps)
 │
 └── data/
     ├── cache/                     # Raw NetCDF downloads
     │   ├── era5_{var}_{start}_{end}.nc   # One file per variable per year
-    │   └── ifs_{var}_{start}_{end}.nc    # One file per variable (gap period)
+    │   └── ifs_{var}_{start}_{end}.nc    # One file per variable (gap + forecast)
     ├── shapefiles/
     │   ├── county/                # tl_2025_us_county.shp (Census TIGER/Line)
     │   └── zipcodes/              # tl_2025_us_zcta520.shp
@@ -147,11 +158,12 @@ python -m ipykernel install --user --name iema --display-name "Python (iema)"
 
 **5. Edit the Parameters cell:**
 ```python
-DATA_DIR   = "data"
-YEAR_START = 2020
-YEAR_END   = 2026
-METRICS    = ["heat_index", "wbgt", "wind_chill", "2m_temperature"]
-THRESHOLDS = {
+DATA_DIR      = "data"
+YEAR_START    = 2020
+YEAR_END      = 2026
+FORECAST_DAYS = 7     # 0 = gap-fill only, 7 = 1-week deterministic forecast
+METRICS       = ["heat_index", "wbgt", "wind_chill", "2m_temperature"]
+THRESHOLDS    = {
     "heat_index":      {"above": [90, 104]},
     "wbgt":            {"above": [80, 85]},
     "wind_chill":      {"below": [-25, -15, 0, 32]},
@@ -186,7 +198,7 @@ The end date reflects the last timestamp with valid (non-NaN) data, which typica
 
 ### Raw data caching (IFS)
 
-IFS data fills the gap between the last valid ERA5 day and yesterday (today's data is excluded to avoid incomplete observations). Cache files follow the same per-variable pattern:
+IFS data fills the gap between the last valid ERA5 day and yesterday (today's data is excluded to avoid incomplete observations), plus any requested forecast days. Cache files follow the same per-variable pattern:
 ```
 ifs_{variable}_{YYYYMMDD}_{YYYYMMDD}.nc
 ```
