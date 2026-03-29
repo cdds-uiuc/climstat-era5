@@ -95,6 +95,27 @@ Reads from CSV files only — can run independently. Produces:
 
 The recent time series plots use line+marker style for readability. IFS gap-fill data (past) is shown in green, while IFS forecast data (future) is shown as a dashed orange line.
 
+### Interactive Dashboards
+
+Two standalone dashboards are available for exploring the output CSVs without touching code. Both read from `data/output/` and can run independently of the pipeline.
+
+**Voila dashboard** (static matplotlib plots):
+```bash
+voila dashboard.ipynb
+```
+
+**Panel dashboard** (interactive Bokeh plots with pan/zoom/hover):
+```bash
+panel serve climstat/data_visualization/dashboard_panel.py --show
+```
+
+Both dashboards provide:
+- Metric selector (all 8 metrics) and county/ZIP toggle
+- Time series explorer with ERA5 + IFS overlay
+- Choropleth map of period-average statistics
+
+The Panel dashboard auto-generates a simplified ZCTA geometry file on first run for faster ZIP code map rendering.
+
 ---
 
 ## Project Structure
@@ -102,6 +123,7 @@ The recent time series plots use line+marker style for readability. IFS gap-fill
 ```
 climstat-era5/
 ├── climstat_pipeline.ipynb        # Entry-point notebook (3 module calls)
+├── dashboard.ipynb                # Voila dashboard (static matplotlib plots)
 ├── environment.yml                # Conda environment
 ├── climstat/                      # Python package
 │   ├── __init__.py                # Package init; exports acquire/process/visualize
@@ -118,7 +140,9 @@ climstat-era5/
 │   │   └── zipcode_agg.py         # Spatial aggregation to IL ZIP codes (ZCTAs)
 │   └── data_visualization/        # Module 3: plots and maps
 │       ├── visualize.py           # Top-level visualize_data() orchestration
-│       └── visualization.py       # Plotting utilities (time series, maps)
+│       ├── visualization.py       # Plotting utilities (time series, maps)
+│       ├── dashboard_data.py      # Dashboard data helpers (CSV scan, load, caching)
+│       └── dashboard_panel.py     # Interactive Panel/Bokeh dashboard
 │
 └── data/
     ├── cache/                     # Raw NetCDF downloads
