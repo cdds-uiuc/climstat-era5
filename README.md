@@ -264,21 +264,22 @@ As a result, first-run downloads are slow (~5 min per variable per year on a typ
 
 ---
 
-## To do / to fix:
+## Potential Next Steps:
 
 ### Geopandas:
-The join methods in geopandas is simplistic and may give us biased estimates of county and zipcode average. There is no area weighting and no spatial interpolation. Nearest neighbor approach gives mayn zipcods teeh same value .There may be other issues with geopandas. 
+The join methods in geopandas is simplistic and may give us biased estimates of county and zipcode average. There is no area weighting and no spatial interpolation. Nearest neighbor approach gives many zipcodes teeh same value. There may be other issues with geopandas. I tried the xagg library, which does do area weighting and spatial interpolation, however it is too slow, as it does take advantage of vectorized operations in xarray. Also, to my understanding, it is maintained by a small team of academics, which is a recipy for disaster if we want long term functionality. geopandas is almost certainly a more stable solution. 
 
 ### Ensemble forecast
-We tried to download and use the ensemble IFS forecast from open-meteo. However, we very quickly ran into api call limits with the free tier. 
+Ideally, we want uncertainty in our forecasts. I tried to download and use the ensemble IFS forecast from open-meteo.com, but ran into api call limits with the free tier. 
 
-We need ot find another way to get ensemble forecasts if we want to show uncertainty in fuuture data. 
+We need ot find another way to get ensemble forecasts if we want to show uncertainty in future data. 
 
- ###
- Historical data sets. Datasets other than ERA5 exist, and may be appropriate for the last decade or so of historical data. The prime candidate is URMA for historical data, followed by HRRR or ERA5-Land.  
+ ### Data source
+ Historical data sets. Datasets other than ERA5 and IFS exist, and may be appropriate for the last decade or so of historical data. 
+ 
+ It may be advantageous to switch to URMA for historical data. (Other candidates are HRRR or ERA5-Land). URMA has higher resolution and is the NWS dataset for analysis of record (i.e. to verify forecasts). It has not been vetted for stability and potential issues when asessing long-term trends. These trends can be affected by new data points coming in. This is more of an issue for analysis of long term climate change, which is not our goal here. It also does not go as far back as ERA5, but that may not be an issue for our purposes. The other potential issue with URMA is that the database and api are not as well maintained as ERA5.   Most likely, we would want to build in options for both datasets. 
 
 
 
 ## Contact
-
 Cristi Proistosescu — cristi@illinois.edu
