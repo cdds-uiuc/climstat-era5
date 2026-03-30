@@ -108,6 +108,9 @@ def averages_summary(
     metric_hourly: xr.DataArray,
     thresholds: list[float] | None = None,
     thresholds_below: list[float] | None = None,
+    daily_max: xr.DataArray | None = None,
+    daily_mean: xr.DataArray | None = None,
+    daily_min: xr.DataArray | None = None,
 ) -> xr.Dataset:
     """
     Compute climatological (time-collapsed) summary statistics.
@@ -125,6 +128,14 @@ def averages_summary(
         Threshold values for above-exceedance statistics.
     thresholds_below : list[float], optional
         Threshold values for below-threshold statistics (e.g. wind chill).
+    daily_max : xr.DataArray, optional
+        Pre-computed daily maxima (from ``daily_summary``).  If provided
+        along with *daily_mean* and *daily_min*, the expensive resample
+        step is skipped.
+    daily_mean : xr.DataArray, optional
+        Pre-computed daily means.
+    daily_min : xr.DataArray, optional
+        Pre-computed daily minima.
 
     Returns
     -------
@@ -142,11 +153,13 @@ def averages_summary(
     if thresholds_below is None:
         thresholds_below = []
 
-    # First compute daily aggregates (these still have a time dimension,
-    # one value per day)
-    daily_max = metric_hourly.resample(time="1D").max()
-    daily_mean = metric_hourly.resample(time="1D").mean()
-    daily_min = metric_hourly.resample(time="1D").min()
+    # Reuse pre-computed daily aggregates if available, otherwise resample
+    if daily_max is None:
+        daily_max = metric_hourly.resample(time="1D").max()
+    if daily_mean is None:
+        daily_mean = metric_hourly.resample(time="1D").mean()
+    if daily_min is None:
+        daily_min = metric_hourly.resample(time="1D").min()
 
     ds = xr.Dataset()
 

@@ -14,5 +14,6 @@ __pycache__/
 .DS_Store
 
 # Claude
+.claude/
 plan.md
 CLAUDE.md
