@@ -146,6 +146,15 @@ def relative_humidity(dewpoint_k: xr.DataArray, t2m_k: xr.DataArray) -> xr.DataA
     vp_sat = vapor_pressure(t2m_k)        # saturation vapor pressure
     return (vp / vp_sat).clip(0, 1)
 
+def dewpoint_F(dewpoint_k: xr.DataArray) -> xr.DataArray:
+    """
+    Compute dewpoint in Fahrenheit.
+
+    Input:  dewpoint in Kelvin.
+    Output: dewpoint in Fahrenheit.
+    """
+    return dp_f = k_to_f(dewpoint_k)       # dewpoint in Fahrenheit
+
 
 # ===========================================================================
 # Tier 2 — depend on raw ERA5 + Tier 1
