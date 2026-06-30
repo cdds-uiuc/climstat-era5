@@ -130,7 +130,8 @@ climstat-era5/
 │   ├── data_acquisition/          # Module 1: raw data downloads
 │   │   ├── acquire.py             # Top-level acquire_data() orchestration
 │   │   ├── era5_extract.py        # ERA5 download + per-variable-per-year caching
-│   │   └── ifs_extract.py         # IFS download + per-variable caching + forecast
+│   │   ├── ifs_extract.py         # IFS download + per-variable caching + forecast
+│   │   └── shapefile_extract.py   # Shapefile preprocessing (land-only counties)   
 │   ├── data_process/              # Module 2: metrics, statistics, aggregation
 │   │   ├── process.py             # Top-level process_data() orchestration
 │   │   ├── metrics.py             # Heat/cold metric formulas (METRIC_REGISTRY)
@@ -150,7 +151,11 @@ climstat-era5/
     │   └── ifs_{var}_{start}_{end}.nc    # One file per variable (gap + forecast)
     ├── shapefiles/
     │   ├── county/                # tl_2025_us_county.shp (Census TIGER/Line)
-    │   └── zipcodes/              # tl_2025_us_zcta520.shp
+    │   ├── zipcodes/              # tl_2025_us_zcta520.shp
+    │   ├── derived/               # Contains county shapefile (tl_2025_il_counties_land_only.shp) with Lake Michigan (and other water bodies) removed from Cook/Lake County
+    │   └── areawater/             
+    │      ├── tl_2024_17031_areawater/             # Contains .zip file for Cook County. 
+    │      └── tl_2024_17097_areawater/             # Contains .zip file for Lake County. 
     └── output/                    # Final CSVs (counties + ZIP codes)
 ```
 
@@ -164,6 +169,9 @@ The pipeline requires US Census TIGER/Line shapefiles, which are too large for G
 
 - **County shapefile** — download `tl_2025_us_county.zip` from the [Census Bureau](https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2025&layergroup=Counties+%28and+equivalent%29) and unzip into `data/shapefiles/county/`
 - **ZIP Code (ZCTA) shapefile** — download `tl_2025_us_zcta520.zip` from the [Census Bureau](https://www.census.gov/cgi-bin/geo/shapefiles/index.php?year=2025&layergroup=ZIP+Code+Tabulation+Areas) and unzip into `data/shapefiles/zipcodes/`
+- **Water shapefile** — download `tl_2024_17031_areawater.zip` (Cook) and `tl_2024_17097_areawater.zip` (Lake) from the [Census Bureau](https://www2.census.gov/geo/tiger/TIGER2024/AREAWATER/) and unzip into `data/shapefiles/areawater/`. These two are required for excluding Lake Michigan measurements when doing county aggregations. 
+
+
 
 **2. (Optional) Request ERA5 pre-cached data:**
 The pipeline downloads ERA5 data and caches a local version. If the cached version exists, subsequent runs do not need to download the data again. This download process is slow because of the way the data is chunked (see [Download Performance Note](#download-performance-note)). You can speed this up by requesting pre-cached data from cristi.
