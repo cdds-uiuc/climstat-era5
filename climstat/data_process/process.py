@@ -65,6 +65,7 @@ def run_pipeline(
     source_label: str = "",
     zcta_mapping: pd.DataFrame | None = None,
     daily_only: bool = False,
+    # water_shapefile: list[str] | None = None,
 ) -> dict:
     """
     Run the full metrics -> statistics -> aggregation -> CSV export pipeline.
@@ -135,6 +136,7 @@ def run_pipeline(
                 ds,
                 zcta_shapefile=zcta_shapefile_path,
                 county_shapefile=shapefile_path,
+                # water_shapefile=water_shapefile,
             )
         del ds
         return {
@@ -162,6 +164,7 @@ def run_pipeline(
             ds,
             zcta_shapefile=zcta_shapefile_path,
             county_shapefile=shapefile_path,
+            # water_shapefile=water_shapefile,
         )
 
     del ds  # free raw data
@@ -253,6 +256,7 @@ def process_data(
     zcta_shapefile_path: str,
     output_dir: str,
     convert_to_f: bool = True,
+    # water_shapefile: list[str] | None = None,
 ) -> dict:
     """
     Compute metrics, statistics, and aggregation, then save CSVs (Module 2).
@@ -298,6 +302,7 @@ def process_data(
         output_dir=output_dir,
         convert_to_f=convert_to_f,
         daily_only=False,
+        # water_shapefile=water_shapefile,
     )
 
     ifs_start = None
@@ -316,6 +321,7 @@ def process_data(
             source_label="ifs",
             zcta_mapping=era5["zcta_mapping"],
             daily_only=True,
+            # water_shapefile=water_shapefile,
         )
         ifs_start = ifs["start_str"]
         ifs_end = ifs["end_str"]

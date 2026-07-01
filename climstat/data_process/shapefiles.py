@@ -8,6 +8,15 @@ and visualization.
 
 import os
 
+os.environ["PROJ_DATA"] = os.path.join(os.environ["CONDA_PREFIX"], "share", "proj")
+os.environ["GDAL_DATA"] = os.path.join(os.environ["CONDA_PREFIX"], "share", "gdal")
+
+import pyproj
+print(pyproj.datadir.get_data_dir())   # should print the iema2 path
+print(pyproj.show_versions())
+
+
+
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -28,6 +37,15 @@ DEFAULT_COUNTY_SHAPEFILE = os.path.join(
 DEFAULT_ZCTA_SHAPEFILE = os.path.join(
     _PROJECT_ROOT, "data", "shapefiles", "zipcodes", "tl_2025_us_zcta520.shp",
 )
+
+DEFAULT_WATER_SHAPEFILE = os.path.join(
+    _PROJECT_ROOT, "data", "shapefiles", "water",
+)
+
+def default_water_shapefiles() -> list[str]:
+    """All .shp files in the default water directory."""
+    import glob
+    return sorted(glob.glob(os.path.join(DEFAULT_WATER_SHAPEFILE, "*.shp")))
 
 
 def ensure_epsg4326(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -139,3 +157,33 @@ def ensure_lon_180(ds: xr.Dataset) -> xr.Dataset:
         ds = ds.assign_coords(lon=(ds["lon"] + 180) % 360 - 180)
         ds = ds.sortby("lon")
     return ds
+
+
+def load_water_polygons(water_shapefile_paths: list[str]) -> gpd.GeoDataFrame:
+    """Load and concatenate ZCTA-level water shapefiles into one GeoDataFrame."""
+    parts = [ensure_epsg4326(gpd.read_file(p)) for p in water_shapefile_paths]
+    return gpd.GeoDataFrame(
+        pd.concat(parts, ignore_index=True),
+        crs="EPSG:4326",
+    )
+
+
+def filter_points_to_land(
+    points_gdf: gpd.GeoDataFrame,
+    water_gdf: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """
+    Drop grid points that fall inside any water polygon.
+
+    Returns a GeoDataFrame with only land points.
+    """
+    if water_gdf.empty:
+        return points_gdf
+
+    # Spatial join: which points are inside water polygons
+    water_union = water_gdf.union_all()
+    in_water = points_gdf.geometry.within(water_union)
+    n_removed = int(in_water.sum())
+    print(f"[shapefiles] Removed {n_removed} water grid points "
+          f"({len(points_gdf)} -> {len(points_gdf) - n_removed})")
+    return points_gdf[~in_water].reset_index(drop=True)

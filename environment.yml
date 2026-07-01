@@ -1,4 +1,4 @@
-name: iema
+name: iema2
 channels:
   - conda-forge
 dependencies:

@@ -146,14 +146,6 @@ def relative_humidity(dewpoint_k: xr.DataArray, t2m_k: xr.DataArray) -> xr.DataA
     vp_sat = vapor_pressure(t2m_k)        # saturation vapor pressure
     return (vp / vp_sat).clip(0, 1)
 
-def dewpoint_F(dewpoint_k: xr.DataArray) -> xr.DataArray:
-    """
-    Compute dewpoint in Fahrenheit.
-
-    Input:  dewpoint in Kelvin.
-    Output: dewpoint in Fahrenheit.
-    """
-    return dp_f = k_to_f(dewpoint_k)       # dewpoint in Fahrenheit
 
 
 # ===========================================================================
@@ -456,6 +448,12 @@ METRIC_REGISTRY = {
         "era5_vars": ["2m_temperature"],
         "call": lambda ds: ds["2m_temperature"],
         "unit": "K",  # compute_metrics auto-converts K→°F
+    },
+    "2m_dewpoint_temperature": {
+        "func": None,
+        "era5_vars": ["2m_dewpoint_temperature"],
+        "call": lambda ds: ds["2m_dewpoint_temperature"],
+        "unit": "K",   # compute_metrics auto-converts K→°F
     },
 }
 

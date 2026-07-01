@@ -39,6 +39,7 @@ import geopandas as gpd
 from .shapefiles import (
     DEFAULT_COUNTY_SHAPEFILE,
     DEFAULT_ZCTA_SHAPEFILE,
+    # DEFAULT_WATER_SHAPEFILE,
     build_grid_points,
     ensure_lon_180,
     load_illinois_zctas,
@@ -49,6 +50,7 @@ def build_zcta_mapping(
     ds: xr.Dataset,
     zcta_shapefile: str | None = None,
     county_shapefile: str | None = None,
+    # water_shapefile: str | None = None,
 ) -> pd.DataFrame:
     """
     Precompute the ZCTA-to-grid-point mapping.
@@ -74,14 +76,21 @@ def build_zcta_mapping(
         zcta_shapefile = DEFAULT_ZCTA_SHAPEFILE
     if county_shapefile is None:
         county_shapefile = DEFAULT_COUNTY_SHAPEFILE
+    # if water_shapefile is None: 
+    #     water_shapefile = DEFAULT_WATER_SHAPEFILE
 
     ds = ensure_lon_180(ds)
 
-    print("[zipcode_agg] Loading Illinois ZCTAs ...")
+    print("[zipcode_agg] Loading Illinois ZCTAs ...",DEFAULT_COUNTY_SHAPEFILE )
     zctas = load_illinois_zctas(zcta_shapefile, county_shapefile)
     print(f"[zipcode_agg] {len(zctas)} ZCTAs intersecting Illinois")
 
     points_gdf = build_grid_points(ds)
+
+    # if water_shapefile:
+    #     from .shapefiles import load_water_polygons, filter_points_to_land
+    #     water_gdf = load_water_polygons(water_shapefile)
+    #     points_gdf = filter_points_to_land(points_gdf, water_gdf)
 
     print("[zipcode_agg] Assigning ZCTAs to nearest grid points ...")
     centroids = zctas[["ZCTA5CE20", "geometry"]].copy()
@@ -138,7 +147,7 @@ def aggregate_to_zipcodes(
     if zcta_mapping is not None:
         nearest = zcta_mapping
     else:
-        nearest = build_zcta_mapping(ds, zcta_shapefile, county_shapefile)
+        nearest = build_zcta_mapping(ds, zcta_shapefile, county_shapefile)#,water_shapefile)
 
     # Step 3: convert xarray to DataFrame and merge ZCTA labels
     print("[zipcode_agg] Merging with full time-series data ...")
