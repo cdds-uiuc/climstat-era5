@@ -147,6 +147,7 @@ def relative_humidity(dewpoint_k: xr.DataArray, t2m_k: xr.DataArray) -> xr.DataA
     return (vp / vp_sat).clip(0, 1)
 
 
+
 # ===========================================================================
 # Tier 2 — depend on raw ERA5 + Tier 1
 #
@@ -447,6 +448,12 @@ METRIC_REGISTRY = {
         "era5_vars": ["2m_temperature"],
         "call": lambda ds: ds["2m_temperature"],
         "unit": "K",  # compute_metrics auto-converts K→°F
+    },
+    "2m_dewpoint_temperature": {
+        "func": None,
+        "era5_vars": ["2m_dewpoint_temperature"],
+        "call": lambda ds: ds["2m_dewpoint_temperature"],
+        "unit": "K",   # compute_metrics auto-converts K→°F
     },
 }
 
